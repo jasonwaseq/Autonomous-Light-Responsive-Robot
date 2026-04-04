@@ -30,12 +30,27 @@
 #include "TemplateEventChecker.h"
 #include "ES_Events.h"
 #include "serial.h"
-#include "AD.h"
+#include "roach.h"
+#ifndef EVENTCHECKER_TEST
+#include "ES_Framework.h"
+#endif
 
 /*******************************************************************************
  * MODULE #DEFINES                                                             *
  ******************************************************************************/
-#define BATTERY_DISCONNECT_THRESHOLD 175
+#define NUM_BUMPERS 4u
+
+#define FRONT_LEFT_BUMPER_MASK  (1u << 0)
+#define FRONT_RIGHT_BUMPER_MASK (1u << 1)
+#define REAR_LEFT_BUMPER_MASK   (1u << 2)
+#define REAR_RIGHT_BUMPER_MASK  (1u << 3)
+
+/*
+ * Higher ADC readings mean less light on this sensor.
+ * This single threshold is intentionally naive so the detector can chatter
+ * when the sensor hovers near the boundary.
+ */
+#define LIGHT_DARK_THRESHOLD 650u
 
 /*******************************************************************************
  * EVENTCHECKER_TEST SPECIFIC CODE                                                             *
@@ -44,7 +59,6 @@
 //#define EVENTCHECKER_TEST
 #ifdef EVENTCHECKER_TEST
 #include <stdio.h>
-#define SaveEvent(x) do {eventName=__func__; storedEvent=x;} while (0)
 
 static const char *eventName;
 static ES_Event storedEvent;
@@ -53,59 +67,67 @@ static ES_Event storedEvent;
 /*******************************************************************************
  * PRIVATE FUNCTION PROTOTYPES                                                 *
  ******************************************************************************/
-/* Prototypes for private functions for this EventChecker. They should be functions
-   relevant to the behavior of this particular event checker */
+static uint8_t CheckBumperTransition(uint8_t bumperIndex, uint8_t bumperMask,
+        uint8_t currentState, const char *eventSource);
+static uint8_t PostDetectedEvent(ES_Event thisEvent, const char *eventSource);
 
 /*******************************************************************************
  * PRIVATE MODULE VARIABLES                                                    *
  ******************************************************************************/
 
-/* Any private module level variable that you might need for keeping track of
-   events would be placed here. Private variables should be STATIC so that they
-   are limited in scope to this module. */
+static uint8_t LastBumperStates[NUM_BUMPERS];
+static uint8_t BumperInitialized[NUM_BUMPERS];
+static uint8_t LightInitialized = FALSE;
+static uint8_t LastLightWasDark = FALSE;
 
 /*******************************************************************************
  * PUBLIC FUNCTIONS                                                            *
  ******************************************************************************/
 
-/**
- * @Function TemplateCheckBattery(void)
- * @param none
- * @return TRUE or FALSE
- * @brief This function is a prototype event checker that checks the battery voltage
- *        against a fixed threshold (#defined in the .c file). Note that you need to
- *        keep track of previous history, and that the actual battery voltage is checked
- *        only once at the beginning of the function. The function will post an event
- *        of either BATTERY_CONNECTED or BATTERY_DISCONNECTED if the power switch is turned
- *        on or off with the USB cord plugged into the Uno32. Returns TRUE if there was an 
- *        event, FALSE otherwise.
- * @note Use this code as a template for your other event checkers, and modify as necessary.
- * @author Gabriel H Elkaim, 2013.09.27 09:18
- * @modified Gabriel H Elkaim/Max Dunne, 2016.09.12 20:08 */
-uint8_t TemplateCheckBattery(void) {
-    static ES_EventTyp_t lastEvent = BATTERY_DISCONNECTED;
-    ES_EventTyp_t curEvent;
-    ES_Event thisEvent;
-    uint8_t returnVal = FALSE;
-    uint16_t batVoltage = AD_ReadADPin(BAT_VOLTAGE); // read the battery voltage
+uint8_t TemplateCheckFrontLeftBumper(void)
+{
+    return CheckBumperTransition(0u, FRONT_LEFT_BUMPER_MASK,
+            Roach_ReadFrontLeftBumper(), __func__);
+}
 
-    if (batVoltage > BATTERY_DISCONNECT_THRESHOLD) { // is battery connected?
-        curEvent = BATTERY_CONNECTED;
-    } else {
-        curEvent = BATTERY_DISCONNECTED;
+uint8_t TemplateCheckFrontRightBumper(void)
+{
+    return CheckBumperTransition(1u, FRONT_RIGHT_BUMPER_MASK,
+            Roach_ReadFrontRightBumper(), __func__);
+}
+
+uint8_t TemplateCheckRearLeftBumper(void)
+{
+    return CheckBumperTransition(2u, REAR_LEFT_BUMPER_MASK,
+            Roach_ReadRearLeftBumper(), __func__);
+}
+
+uint8_t TemplateCheckRearRightBumper(void)
+{
+    return CheckBumperTransition(3u, REAR_RIGHT_BUMPER_MASK,
+            Roach_ReadRearRightBumper(), __func__);
+}
+
+uint8_t TemplateCheckLight(void)
+{
+    ES_Event thisEvent;
+    uint16_t lightLevel = Roach_LightLevel();
+    uint8_t lightIsDark = (lightLevel > LIGHT_DARK_THRESHOLD) ? TRUE : FALSE;
+
+    if (LightInitialized == FALSE) {
+        LastLightWasDark = lightIsDark;
+        LightInitialized = TRUE;
+        return FALSE;
     }
-    if (curEvent != lastEvent) { // check for change from last time
-        thisEvent.EventType = curEvent;
-        thisEvent.EventParam = batVoltage;
-        returnVal = TRUE;
-        lastEvent = curEvent; // update history
-#ifndef EVENTCHECKER_TEST           // keep this as is for test harness
-        PostGenericService(thisEvent);
-#else
-        SaveEvent(thisEvent);
-#endif   
+
+    if (lightIsDark == LastLightWasDark) {
+        return FALSE;
     }
-    return (returnVal);
+
+    LastLightWasDark = lightIsDark;
+    thisEvent.EventType = lightIsDark ? INTO_DARK : INTO_LIGHT;
+    thisEvent.EventParam = lightLevel;
+    return PostDetectedEvent(thisEvent, __func__);
 }
 
 /* 
@@ -130,19 +152,19 @@ uint8_t TemplateCheckBattery(void) {
  * with your other projects.
  */
 #ifdef EVENTCHECKER_TEST
-#include <stdio.h>
 static uint8_t(*EventList[])(void) = {EVENT_CHECK_LIST};
 
 void PrintEvent(void);
 
 void main(void) {
-    BOARD_Init();
-    /* user initialization code goes here */
-
-    // Do not alter anything below this line
     int i;
 
+    BOARD_Init();
+    Roach_Init();
+
     printf("\r\nEvent checking test harness for %s", __FILE__);
+    printf("\r\nLight threshold is %u (higher ADC means darker).",
+            LIGHT_DARK_THRESHOLD);
 
     while (1) {
         if (IsTransmitEmpty()) {
@@ -162,3 +184,40 @@ void PrintEvent(void) {
             EventNames[storedEvent.EventType], storedEvent.EventParam);
 }
 #endif
+
+/*******************************************************************************
+ * PRIVATE FUNCTIONs                                                           *
+ ******************************************************************************/
+
+static uint8_t CheckBumperTransition(uint8_t bumperIndex, uint8_t bumperMask,
+        uint8_t currentState, const char *eventSource)
+{
+    ES_Event thisEvent;
+
+    if (BumperInitialized[bumperIndex] == FALSE) {
+        LastBumperStates[bumperIndex] = currentState;
+        BumperInitialized[bumperIndex] = TRUE;
+        return FALSE;
+    }
+
+    if (currentState == LastBumperStates[bumperIndex]) {
+        return FALSE;
+    }
+
+    LastBumperStates[bumperIndex] = currentState;
+    thisEvent.EventType = (currentState == BUMPER_TRIPPED) ? BUMPED : UNBUMPED;
+    thisEvent.EventParam = bumperMask;
+    return PostDetectedEvent(thisEvent, eventSource);
+}
+
+static uint8_t PostDetectedEvent(ES_Event thisEvent, const char *eventSource)
+{
+#ifndef EVENTCHECKER_TEST
+    (void)eventSource;
+    return ES_PostAll(thisEvent);
+#else
+    eventName = eventSource;
+    storedEvent = thisEvent;
+    return TRUE;
+#endif
+}

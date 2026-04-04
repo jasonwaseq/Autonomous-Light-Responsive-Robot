@@ -44,8 +44,10 @@ typedef enum {
     ES_TIMERACTIVE, /* signals that a timer has become active */
     ES_TIMERSTOPPED, /* signals that a timer has stopped*/
     /* User-defined events start here */
-    BATTERY_CONNECTED,
-    BATTERY_DISCONNECTED,
+    BUMPED,
+    UNBUMPED,
+    INTO_LIGHT,
+    INTO_DARK,
 	/* User-defined events end here */
     NUMBEROFEVENTS,
 } ES_EventTyp_t;
@@ -61,8 +63,10 @@ static const char *EventNames[] = {
 	"ES_TIMEOUT",
 	"ES_TIMERACTIVE",
 	"ES_TIMERSTOPPED",
-	"BATTERY_CONNECTED",
-	"BATTERY_DISCONNECTED",
+	"BUMPED",
+	"UNBUMPED",
+	"INTO_LIGHT",
+	"INTO_DARK",
 	"NUMBEROFEVENTS",
 };
 
@@ -75,7 +79,11 @@ static const char *EventNames[] = {
 
 /****************************************************************************/
 // This is the list of event checking functions
-#define EVENT_CHECK_LIST  TemplateCheckBattery
+#define EVENT_CHECK_LIST  TemplateCheckFrontLeftBumper, \
+                          TemplateCheckFrontRightBumper, \
+                          TemplateCheckRearLeftBumper, \
+                          TemplateCheckRearRightBumper, \
+                          TemplateCheckLight
 
 /****************************************************************************/
 // These are the definitions for the post functions to be executed when the
