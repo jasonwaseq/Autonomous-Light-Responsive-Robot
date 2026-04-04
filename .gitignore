@@ -1,0 +1,10 @@
+ECE118_Lab0.X/build/
+ECE118_Lab0.X/debug/
+ECE118_Lab0.X/dist/
+ECE118_Lab0.X/.generated_files/
+ECE118_Lab0.X/nbproject/private/
+*.o
+*.elf
+*.hex
+*.map
+memoryfile.xml
