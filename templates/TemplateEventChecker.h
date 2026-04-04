@@ -32,6 +32,8 @@
 /*******************************************************************************
  * PUBLIC #DEFINES                                                             *
  ******************************************************************************/
+#define ROACH_LIGHT_TO_DARK_THRESHOLD 700u
+#define ROACH_DARK_TO_LIGHT_THRESHOLD 600u
 
 
 /*******************************************************************************
@@ -43,10 +45,7 @@
  * PUBLIC FUNCTION PROTOTYPES                                                  *
  ******************************************************************************/
 
-uint8_t TemplateCheckFrontLeftBumper(void);
-uint8_t TemplateCheckFrontRightBumper(void);
-uint8_t TemplateCheckRearLeftBumper(void);
-uint8_t TemplateCheckRearRightBumper(void);
+uint8_t TemplateCheckBumpers(void);
 uint8_t TemplateCheckLight(void);
 
 

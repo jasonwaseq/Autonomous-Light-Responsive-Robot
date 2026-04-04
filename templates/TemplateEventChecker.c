@@ -36,23 +36,6 @@
 #endif
 
 /*******************************************************************************
- * MODULE #DEFINES                                                             *
- ******************************************************************************/
-#define NUM_BUMPERS 4u
-
-#define FRONT_LEFT_BUMPER_MASK  (1u << 0)
-#define FRONT_RIGHT_BUMPER_MASK (1u << 1)
-#define REAR_LEFT_BUMPER_MASK   (1u << 2)
-#define REAR_RIGHT_BUMPER_MASK  (1u << 3)
-
-/*
- * Higher ADC readings mean less light on this sensor.
- * This single threshold is intentionally naive so the detector can chatter
- * when the sensor hovers near the boundary.
- */
-#define LIGHT_DARK_THRESHOLD 650u
-
-/*******************************************************************************
  * EVENTCHECKER_TEST SPECIFIC CODE                                                             *
  ******************************************************************************/
 
@@ -67,67 +50,112 @@ static ES_Event storedEvent;
 /*******************************************************************************
  * PRIVATE FUNCTION PROTOTYPES                                                 *
  ******************************************************************************/
-static uint8_t CheckBumperTransition(uint8_t bumperIndex, uint8_t bumperMask,
-        uint8_t currentState, const char *eventSource);
 static uint8_t PostDetectedEvent(ES_Event thisEvent, const char *eventSource);
 
 /*******************************************************************************
  * PRIVATE MODULE VARIABLES                                                    *
  ******************************************************************************/
 
-static uint8_t LastBumperStates[NUM_BUMPERS];
-static uint8_t BumperInitialized[NUM_BUMPERS];
+#define NUM_BUMPERS 4u
+#define BUMPER_HISTORY_BITS 4u
+#define BUMPER_HISTORY_MASK ((1u << BUMPER_HISTORY_BITS) - 1u)
+
 static uint8_t LightInitialized = FALSE;
 static uint8_t LastLightWasDark = FALSE;
+static uint8_t BumperInitialized = FALSE;
+static uint8_t StableBumperState = 0u;
+static uint8_t PendingUnbumpedMask = 0u;
+static uint8_t BumperHistory[NUM_BUMPERS];
 
 /*******************************************************************************
  * PUBLIC FUNCTIONS                                                            *
  ******************************************************************************/
 
-uint8_t TemplateCheckFrontLeftBumper(void)
+uint8_t TemplateCheckBumpers(void)
 {
-    return CheckBumperTransition(0u, FRONT_LEFT_BUMPER_MASK,
-            Roach_ReadFrontLeftBumper(), __func__);
-}
+    ES_Event thisEvent;
+    uint8_t i;
+    uint8_t rawBumpers = Roach_ReadBumpers() & 0x0Fu;
+    uint8_t newlyBumped = 0u;
+    uint8_t newlyReleased = 0u;
 
-uint8_t TemplateCheckFrontRightBumper(void)
-{
-    return CheckBumperTransition(1u, FRONT_RIGHT_BUMPER_MASK,
-            Roach_ReadFrontRightBumper(), __func__);
-}
+    if (PendingUnbumpedMask != 0u) {
+        thisEvent.EventType = UNBUMPED;
+        thisEvent.EventParam = PendingUnbumpedMask;
+        PendingUnbumpedMask = 0u;
+        return PostDetectedEvent(thisEvent, __func__);
+    }
 
-uint8_t TemplateCheckRearLeftBumper(void)
-{
-    return CheckBumperTransition(2u, REAR_LEFT_BUMPER_MASK,
-            Roach_ReadRearLeftBumper(), __func__);
-}
+    if (BumperInitialized == FALSE) {
+        StableBumperState = rawBumpers;
+        for (i = 0; i < NUM_BUMPERS; i++) {
+            BumperHistory[i] = (rawBumpers & (1u << i)) ? BUMPER_HISTORY_MASK : 0u;
+        }
+        BumperInitialized = TRUE;
+        return FALSE;
+    }
 
-uint8_t TemplateCheckRearRightBumper(void)
-{
-    return CheckBumperTransition(3u, REAR_RIGHT_BUMPER_MASK,
-            Roach_ReadRearRightBumper(), __func__);
+    for (i = 0; i < NUM_BUMPERS; i++) {
+        uint8_t mask = (uint8_t)(1u << i);
+        uint8_t sample = (rawBumpers & mask) ? 1u : 0u;
+        uint8_t stableSample = (StableBumperState & mask) ? 1u : 0u;
+
+        BumperHistory[i] = (uint8_t)(((BumperHistory[i] << 1) | sample) &
+                BUMPER_HISTORY_MASK);
+
+        if ((BumperHistory[i] == BUMPER_HISTORY_MASK) && (stableSample == 0u)) {
+            StableBumperState |= mask;
+            newlyBumped |= mask;
+        } else if ((BumperHistory[i] == 0u) && (stableSample != 0u)) {
+            StableBumperState &= (uint8_t)(~mask);
+            newlyReleased |= mask;
+        }
+    }
+
+    if (newlyBumped != 0u) {
+        thisEvent.EventType = BUMPED;
+        thisEvent.EventParam = newlyBumped;
+        PendingUnbumpedMask |= newlyReleased;
+        return PostDetectedEvent(thisEvent, __func__);
+    }
+
+    if (newlyReleased != 0u) {
+        thisEvent.EventType = UNBUMPED;
+        thisEvent.EventParam = newlyReleased;
+        return PostDetectedEvent(thisEvent, __func__);
+    }
+
+    return FALSE;
 }
 
 uint8_t TemplateCheckLight(void)
 {
     ES_Event thisEvent;
     uint16_t lightLevel = Roach_LightLevel();
-    uint8_t lightIsDark = (lightLevel > LIGHT_DARK_THRESHOLD) ? TRUE : FALSE;
 
     if (LightInitialized == FALSE) {
-        LastLightWasDark = lightIsDark;
+        LastLightWasDark = (lightLevel >= ROACH_LIGHT_TO_DARK_THRESHOLD) ? TRUE : FALSE;
         LightInitialized = TRUE;
         return FALSE;
     }
 
-    if (lightIsDark == LastLightWasDark) {
-        return FALSE;
+    if (LastLightWasDark == FALSE) {
+        if (lightLevel >= ROACH_LIGHT_TO_DARK_THRESHOLD) {
+            LastLightWasDark = TRUE;
+            thisEvent.EventType = INTO_DARK;
+            thisEvent.EventParam = lightLevel;
+            return PostDetectedEvent(thisEvent, __func__);
+        }
+    } else {
+        if (lightLevel <= ROACH_DARK_TO_LIGHT_THRESHOLD) {
+            LastLightWasDark = FALSE;
+            thisEvent.EventType = INTO_LIGHT;
+            thisEvent.EventParam = lightLevel;
+            return PostDetectedEvent(thisEvent, __func__);
+        }
     }
 
-    LastLightWasDark = lightIsDark;
-    thisEvent.EventType = lightIsDark ? INTO_DARK : INTO_LIGHT;
-    thisEvent.EventParam = lightLevel;
-    return PostDetectedEvent(thisEvent, __func__);
+    return FALSE;
 }
 
 /* 
@@ -163,8 +191,8 @@ void main(void) {
     Roach_Init();
 
     printf("\r\nEvent checking test harness for %s", __FILE__);
-    printf("\r\nLight threshold is %u (higher ADC means darker).",
-            LIGHT_DARK_THRESHOLD);
+    printf("\r\nLight hysteresis: into dark >= %u, into light <= %u.",
+            ROACH_LIGHT_TO_DARK_THRESHOLD, ROACH_DARK_TO_LIGHT_THRESHOLD);
 
     while (1) {
         if (IsTransmitEmpty()) {
@@ -184,31 +212,6 @@ void PrintEvent(void) {
             EventNames[storedEvent.EventType], storedEvent.EventParam);
 }
 #endif
-
-/*******************************************************************************
- * PRIVATE FUNCTIONs                                                           *
- ******************************************************************************/
-
-static uint8_t CheckBumperTransition(uint8_t bumperIndex, uint8_t bumperMask,
-        uint8_t currentState, const char *eventSource)
-{
-    ES_Event thisEvent;
-
-    if (BumperInitialized[bumperIndex] == FALSE) {
-        LastBumperStates[bumperIndex] = currentState;
-        BumperInitialized[bumperIndex] = TRUE;
-        return FALSE;
-    }
-
-    if (currentState == LastBumperStates[bumperIndex]) {
-        return FALSE;
-    }
-
-    LastBumperStates[bumperIndex] = currentState;
-    thisEvent.EventType = (currentState == BUMPER_TRIPPED) ? BUMPED : UNBUMPED;
-    thisEvent.EventParam = bumperMask;
-    return PostDetectedEvent(thisEvent, eventSource);
-}
 
 static uint8_t PostDetectedEvent(ES_Event thisEvent, const char *eventSource)
 {

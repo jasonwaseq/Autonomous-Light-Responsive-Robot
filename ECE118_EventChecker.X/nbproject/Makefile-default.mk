@@ -19,8 +19,8 @@ endif
 endif
 
 # Environment
-MKDIR=gnumkdir -p
-RM=rm -f 
+MKDIR=powershell -NoProfile -Command New-Item -ItemType Directory -Force
+RM=powershell -NoProfile -Command Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
 MV=mv 
 CP=cp 
 

@@ -20,7 +20,7 @@
 //defines for keyboard input
 //#define USE_KEYBOARD_INPUT
 //What State machine are we testing
-//#define POSTFUNCTION_FOR_KEYBOARD_INPUT PostGenericService
+//#define POSTFUNCTION_FOR_KEYBOARD_INPUT PostTemplateService
 
 //define for TattleTale
 #define USE_TATTLETALE
@@ -79,11 +79,7 @@ static const char *EventNames[] = {
 
 /****************************************************************************/
 // This is the list of event checking functions
-#define EVENT_CHECK_LIST  TemplateCheckFrontLeftBumper, \
-                          TemplateCheckFrontRightBumper, \
-                          TemplateCheckRearLeftBumper, \
-                          TemplateCheckRearRightBumper, \
-                          TemplateCheckLight
+#define EVENT_CHECK_LIST  TemplateCheckBumpers, TemplateCheckLight
 
 /****************************************************************************/
 // These are the definitions for the post functions to be executed when the
@@ -91,9 +87,9 @@ static const char *EventNames[] = {
 // a timers, then you can use TIMER_UNUSED
 #define TIMER_UNUSED ((pPostFunc)0)
 #define TIMER0_RESP_FUNC TIMER_UNUSED
-#define TIMER1_RESP_FUNC TIMER_UNUSED
-#define TIMER2_RESP_FUNC TIMER_UNUSED
-#define TIMER3_RESP_FUNC TIMER_UNUSED
+#define TIMER1_RESP_FUNC PostTemplateService
+#define TIMER2_RESP_FUNC PostTemplateService
+#define TIMER3_RESP_FUNC PostTemplateService
 #define TIMER4_RESP_FUNC TIMER_UNUSED
 #define TIMER5_RESP_FUNC TIMER_UNUSED
 #define TIMER6_RESP_FUNC TIMER_UNUSED
@@ -114,7 +110,10 @@ static const char *EventNames[] = {
 // definitions for the response functions to make it easire to check that
 // the timer number matches where the timer event will be routed
 
-#define GENERIC_NAMED_TIMER 0 /*make sure this is enabled above and posting to the correct state machine*/
+#define GENERIC_NAMED_TIMER 0 /* unused */
+#define ROACH_MOTION_TIMER 1  /* timed escape motion phase */
+#define ROACH_BEHAVIOR_TIMER 2 /* periodic search/dance timer */
+#define ROACH_RELEASE_HOLD_TIMER 3 /* dark-mode post-release motion hold */
 
 
 /****************************************************************************/
@@ -134,13 +133,13 @@ static const char *EventNames[] = {
 // services are added in numeric sequence (1,2,3,...) with increasing 
 // priorities
 // the header file with the public function prototypes
-#define SERV_0_HEADER "ES_KeyboardInput.h"
+#define SERV_0_HEADER "TemplateService.h"
 // the name of the Init function
-#define SERV_0_INIT InitKeyboardInput
+#define SERV_0_INIT InitTemplateService
 // the name of the run function
-#define SERV_0_RUN RunKeyboardInput
+#define SERV_0_RUN RunTemplateService
 // How big should this service's Queue be?
-#define SERV_0_QUEUE_SIZE 9
+#define SERV_0_QUEUE_SIZE 16
 
 /****************************************************************************/
 // These are the definitions for Service 1

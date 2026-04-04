@@ -1,14 +1,18 @@
 #include <BOARD.h>
+#include "ES_Configure.h"
+#include "ES_Framework.h"
 #include <stdio.h>
-
-#include "RoachHardwareExplorer.h"
 
 void main(void)
 {
     BOARD_Init();
 
-    printf("Starting Roach hardware exploration harness\r\n");
-    RunRoachHardwareExplorer();
+    printf("Starting ES_Framework bumper/light harness\r\n");
+    if (ES_Initialize() == Success) {
+        (void)ES_Run();
+    }
+
+    printf("Framework initialization failed\r\n");
 
     for (;;)
         ;
