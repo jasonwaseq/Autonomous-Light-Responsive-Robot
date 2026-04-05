@@ -19,10 +19,10 @@ endif
 endif
 
 # Environment
-MKDIR=powershell -NoProfile -Command New-Item -ItemType Directory -Force
-RM=powershell -NoProfile -Command Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-MV=mv 
-CP=cp 
+MKDIR=cmd /c ..\\tools\\nb_mkdir.bat
+RM=cmd /c ..\\tools\\nb_rm.bat
+MV="C:/Program Files/Git/usr/bin/mv.exe"
+CP="C:/Program Files/Git/usr/bin/cp.exe"
 
 # Macros
 CND_CONF=default

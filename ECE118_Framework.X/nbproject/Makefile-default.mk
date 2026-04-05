@@ -19,8 +19,8 @@ endif
 endif
 
 # Environment
-MKDIR=gnumkdir -p
-RM=rm -f 
+MKDIR=cmd /c ..\\tools\\nb_mkdir.bat
+RM=cmd /c ..\\tools\\nb_rm.bat
 MV=mv 
 CP=cp 
 
