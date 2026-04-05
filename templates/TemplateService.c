@@ -64,6 +64,7 @@
 #define ROACH_BASE_ESCAPE_CLEAR_MS 180u
 #define ROACH_DARK_ESCAPE_STEP_MS 220u
 #define ROACH_ESCAPE_MS_PER_SEVERITY 110u
+#define ROACH_ESCAPE_WATCHDOG_MARGIN_MS 220u
 #define ROACH_MAX_ESCAPE_SEVERITY 3u
 #define ROACH_MAX_BUMP_RETRIES 4u
 
@@ -75,6 +76,7 @@
  ******************************************************************************/
 static void StopMotors(void);
 static uint8_t ReadCurrentBumpers(void);
+static uint8_t GetKnownBumperMask(uint8_t eventMask);
 static void DriveStraight(signed char speed);
 static void DriveArc(signed char baseSpeed, uint8_t turnRight);
 static void DrivePivot(uint8_t turnRight, signed char speed);
@@ -248,6 +250,7 @@ ES_Event RunTemplateService(ES_Event ThisEvent)
         case ES_EXIT:
             (void)ES_Timer_StopTimer(ROACH_BEHAVIOR_TIMER);
             (void)ES_Timer_StopTimer(ROACH_MOTION_TIMER);
+            (void)ES_Timer_StopTimer(ROACH_RELEASE_HOLD_TIMER);
             (void)RunLightSubHSM(EXIT_EVENT);
             break;
 
@@ -304,14 +307,23 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
 
     case DarkStillState:
         switch (ThisEvent.EventType) {
-        case ES_ENTRY:
+        case ES_ENTRY: {
+            uint8_t bumpMask = ReadCurrentBumpers();
             StopMotors();
             Roach_BarGraph(ROACH_HIDE_LED_LEVEL);
+            if (bumpMask != 0u) {
+                ConfigureDarkEscape(bumpMask);
+                DarkEscapeRetryCount = 0u;
+                nextState = DarkEscapeState;
+                makeTransition = TRUE;
+            }
             ThisEvent.EventType = ES_NO_EVENT;
             break;
+        }
 
         case BUMPED:
-            ConfigureDarkEscape(ReadCurrentBumpers());
+            ConfigureDarkEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
             DarkEscapeRetryCount = 0u;
             nextState = DarkEscapeState;
             makeTransition = TRUE;
@@ -342,7 +354,8 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
 
         case BUMPED:
             (void)ES_Timer_StopTimer(ROACH_RELEASE_HOLD_TIMER);
-            ConfigureDarkEscape(ReadCurrentBumpers());
+            ConfigureDarkEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
             if (DarkEscapeRetryCount < 0xFFu) {
                 DarkEscapeRetryCount++;
             }
@@ -365,7 +378,9 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
                     makeTransition = TRUE;
                 } else {
                     /* Still pressed — try another escape move */
-                    DarkEscapeRetryCount++;
+                    if (DarkEscapeRetryCount < 0xFFu) {
+                        DarkEscapeRetryCount++;
+                    }
                     if (DarkEscapeRetryCount > ROACH_MAX_BUMP_RETRIES * 2u) {
                         /* Truly stuck: give up and return to still */
                         nextState = DarkStillState;
@@ -378,7 +393,9 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
                 ThisEvent.EventType = ES_NO_EVENT;
             } else if (ThisEvent.EventParam == ROACH_MOTION_TIMER) {
                 if (ReadCurrentBumpers() != 0u) {
-                    DarkEscapeRetryCount++;
+                    if (DarkEscapeRetryCount < 0xFFu) {
+                        DarkEscapeRetryCount++;
+                    }
                     if (DarkEscapeRetryCount > ROACH_MAX_BUMP_RETRIES * 2u) {
                         /* Truly stuck: give up and return to still */
                         nextState = DarkStillState;
@@ -441,12 +458,21 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 
     case LightRunState:
         switch (ThisEvent.EventType) {
-        case ES_ENTRY:
+        case ES_ENTRY: {
+            uint8_t bumpMask = ReadCurrentBumpers();
+            if (bumpMask != 0u) {
+                ConfigureLightEscape(bumpMask);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+                ThisEvent.EventType = ES_NO_EVENT;
+                break;
+            }
             DriveStraight(ROACH_RUN_SPEED);
             Roach_BarGraph(ROACH_RUN_LED_LEVEL);
             ScheduleNextLightBehavior();
             ThisEvent.EventType = ES_NO_EVENT;
             break;
+        }
 
         case ES_EXIT:
             (void)ES_Timer_StopTimer(ROACH_BEHAVIOR_TIMER);
@@ -454,7 +480,8 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
@@ -466,10 +493,16 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 
         case ES_TIMEOUT:
             if (ThisEvent.EventParam == ROACH_BEHAVIOR_TIMER) {
-                LightEscapeRetryCount = 0u;
-                nextState = (NextBehaviorIsDance == TRUE) ?
-                        LightDanceState : LightSearchState;
-                NextBehaviorIsDance ^= TRUE;
+                uint8_t bumpMask = ReadCurrentBumpers();
+                if (bumpMask != 0u) {
+                    ConfigureLightEscape(bumpMask);
+                    nextState = LightEscapeState;
+                } else {
+                    LightEscapeRetryCount = 0u;
+                    nextState = (NextBehaviorIsDance == TRUE) ?
+                            LightDanceState : LightSearchState;
+                    NextBehaviorIsDance ^= TRUE;
+                }
                 makeTransition = TRUE;
                 ThisEvent.EventType = ES_NO_EVENT;
             }
@@ -490,22 +523,15 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 
         case ES_EXIT:
             (void)ES_Timer_StopTimer(ROACH_MOTION_TIMER);
+            (void)ES_Timer_StopTimer(ROACH_RELEASE_HOLD_TIMER);
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
         case BUMPED:
-            /* Only restart escape if we are still in the move-away phase;
-               if we are already turning, let the turn timer finish so we
-               always make progress and never spin forever on a wall. */
-            if (LightEscapePhase == LIGHT_ESCAPE_MOVE_AWAY_PHASE) {
-                ConfigureLightEscape(ReadCurrentBumpers());
-                if (LightEscapeRetryCount >= ROACH_MAX_BUMP_RETRIES) {
-                    LightEscapePhase = LIGHT_ESCAPE_TURN_PHASE;
-                }
-                ApplyLightEscapePhase();
-            }
-            /* Bump during turn phase: absorb the event and let timer drive the
-               transition so the turn always completes. */
+            ConfigureLightEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
+            LightEscapePhase = LIGHT_ESCAPE_MOVE_AWAY_PHASE;
+            ApplyLightEscapePhase();
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
@@ -514,15 +540,22 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case ES_TIMEOUT:
-            if (ThisEvent.EventParam == ROACH_MOTION_TIMER) {
+            if ((ThisEvent.EventParam == ROACH_MOTION_TIMER) ||
+                    (ThisEvent.EventParam == ROACH_RELEASE_HOLD_TIMER)) {
                 if (LightEscapePhase == LIGHT_ESCAPE_MOVE_AWAY_PHASE) {
                     LightEscapePhase = LIGHT_ESCAPE_TURN_PHASE;
                     ApplyLightEscapePhase();
                 } else {
-                    /* Turn phase done — always return to running */
-                    LightEscapeRetryCount = 0u;
-                    nextState = LightRunState;
-                    makeTransition = TRUE;
+                    uint8_t bumpMask = ReadCurrentBumpers();
+                    if (bumpMask != 0u) {
+                        ConfigureLightEscape(bumpMask);
+                        LightEscapePhase = LIGHT_ESCAPE_MOVE_AWAY_PHASE;
+                        ApplyLightEscapePhase();
+                    } else {
+                        LightEscapeRetryCount = 0u;
+                        nextState = LightRunState;
+                        makeTransition = TRUE;
+                    }
                 }
                 ThisEvent.EventType = ES_NO_EVENT;
             }
@@ -535,13 +568,22 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 
     case LightSearchState:
         switch (ThisEvent.EventType) {
-        case ES_ENTRY:
+        case ES_ENTRY: {
+            uint8_t bumpMask = ReadCurrentBumpers();
+            if (bumpMask != 0u) {
+                ConfigureLightEscape(bumpMask);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+                ThisEvent.EventType = ES_NO_EVENT;
+                break;
+            }
             SearchTurnRight ^= TRUE;
             DriveArc(ROACH_SEARCH_SPEED, SearchTurnRight);
             Roach_BarGraph(ROACH_SEARCH_LED_LEVEL);
             ES_Timer_InitTimer(ROACH_BEHAVIOR_TIMER, ROACH_SEARCH_DURATION_MS);
             ThisEvent.EventType = ES_NO_EVENT;
             break;
+        }
 
         case ES_EXIT:
             (void)ES_Timer_StopTimer(ROACH_BEHAVIOR_TIMER);
@@ -549,7 +591,8 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
@@ -575,11 +618,20 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 
     case LightDanceState:
         switch (ThisEvent.EventType) {
-        case ES_ENTRY:
+        case ES_ENTRY: {
+            uint8_t bumpMask = ReadCurrentBumpers();
+            if (bumpMask != 0u) {
+                ConfigureLightEscape(bumpMask);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+                ThisEvent.EventType = ES_NO_EVENT;
+                break;
+            }
             DanceStep = 0u;
             ApplyDanceStep();
             ThisEvent.EventType = ES_NO_EVENT;
             break;
+        }
 
         case ES_EXIT:
             (void)ES_Timer_StopTimer(ROACH_BEHAVIOR_TIMER);
@@ -587,7 +639,8 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape(GetKnownBumperMask(
+                    (uint8_t)(ThisEvent.EventParam & 0x0Fu)));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
@@ -639,6 +692,19 @@ static void StopMotors(void)
 static uint8_t ReadCurrentBumpers(void)
 {
     return (uint8_t)(Roach_ReadBumpers() & 0x0Fu);
+}
+
+static uint8_t GetKnownBumperMask(uint8_t eventMask)
+{
+    uint8_t mask = StableBumperState & 0x0Fu;
+
+    if (mask == 0u) {
+        mask = (uint8_t)(eventMask & 0x0Fu);
+    }
+    if (mask == 0u) {
+        mask = ReadCurrentBumpers();
+    }
+    return mask;
 }
 
 static void DriveStraight(signed char speed)
@@ -732,14 +798,22 @@ static uint16_t GetDarkEscapeStepTime(void)
 
 static uint16_t GetLightEscapeDriveTime(void)
 {
+    uint8_t severity = LightEscapeRetryCount;
+    if (severity > ROACH_MAX_ESCAPE_SEVERITY) {
+        severity = ROACH_MAX_ESCAPE_SEVERITY;
+    }
     return (uint16_t)(ROACH_BASE_ESCAPE_DRIVE_MS +
-            (LightEscapeRetryCount * ROACH_ESCAPE_MS_PER_SEVERITY));
+            (severity * ROACH_ESCAPE_MS_PER_SEVERITY));
 }
 
 static uint16_t GetLightEscapeTurnTime(void)
 {
+    uint8_t severity = LightEscapeRetryCount;
+    if (severity > ROACH_MAX_ESCAPE_SEVERITY) {
+        severity = ROACH_MAX_ESCAPE_SEVERITY;
+    }
     return (uint16_t)(ROACH_BASE_ESCAPE_TURN_MS +
-            (LightEscapeRetryCount * ROACH_ESCAPE_MS_PER_SEVERITY));
+            (severity * ROACH_ESCAPE_MS_PER_SEVERITY));
 }
 
 static void ConfigureDarkEscape(uint8_t bumpMask)
@@ -809,7 +883,7 @@ static void ConfigureLightEscape(uint8_t bumpMask)
         bumpMask = ReadCurrentBumpers();
     }
     LightEscapeBumpMask = bumpMask;
-    if (LightEscapeRetryCount < 0xFFu) {
+    if (LightEscapeRetryCount < ROACH_MAX_BUMP_RETRIES) {
         LightEscapeRetryCount++;
     }
     LightEscapeTurnRight = ChooseTurnRight(bumpMask);
@@ -818,6 +892,8 @@ static void ConfigureLightEscape(uint8_t bumpMask)
 
 static void ApplyLightEscapePhase(void)
 {
+    uint16_t phaseTime;
+
     Roach_BarGraph(ROACH_LIGHT_ESCAPE_LED_LEVEL);
 
     if (LightEscapePhase == LIGHT_ESCAPE_MOVE_AWAY_PHASE) {
@@ -826,11 +902,18 @@ static void ApplyLightEscapePhase(void)
         } else {
             DrivePivot(LightEscapeTurnRight, ROACH_LIGHT_PIVOT_SPEED);
         }
-        ES_Timer_InitTimer(ROACH_MOTION_TIMER, GetLightEscapeDriveTime());
+        phaseTime = GetLightEscapeDriveTime();
+        ES_Timer_InitTimer(ROACH_MOTION_TIMER, phaseTime);
     } else {
         DrivePivot(LightEscapeTurnRight, ROACH_LIGHT_PIVOT_SPEED);
-        ES_Timer_InitTimer(ROACH_MOTION_TIMER, GetLightEscapeTurnTime());
+        phaseTime = GetLightEscapeTurnTime();
+        ES_Timer_InitTimer(ROACH_MOTION_TIMER, phaseTime);
     }
+
+    /* Backup timeout so LightEscapeState always progresses even if one timer
+       event is missed in the queue. */
+    ES_Timer_InitTimer(ROACH_RELEASE_HOLD_TIMER,
+            (uint16_t)(phaseTime + ROACH_ESCAPE_WATCHDOG_MARGIN_MS));
 }
 
 static void ApplyDanceStep(void)
