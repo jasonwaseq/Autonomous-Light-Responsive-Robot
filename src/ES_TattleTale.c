@@ -83,7 +83,6 @@ void ES_TattleTaleDump(void)
 {
     uint8_t curDataPoint = 0;
     tattleDepth = 0;
-    T1CONCLR = _T1CON_ON_MASK;
     printf("\r\n");
     for (curDataPoint = 0; curDataPoint < tattleCount; curDataPoint++) {
 #ifdef SUPPRESS_EXIT_ENTRY_IN_TATTLE
@@ -97,14 +96,12 @@ void ES_TattleTaleDump(void)
             } else {
                 printf(";");
             }
-            while (!IsTransmitEmpty());
 #ifdef SUPPRESS_EXIT_ENTRY_IN_TATTLE
         }
 #endif
     }
     printf("\n");
     tattleCount = 0;
-    T1CONSET = _T1CON_ON_MASK;
 }
 
 /**

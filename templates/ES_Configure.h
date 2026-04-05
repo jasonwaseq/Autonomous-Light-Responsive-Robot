@@ -139,7 +139,7 @@ static const char *EventNames[] = {
 // the name of the run function
 #define SERV_0_RUN RunTemplateService
 // How big should this service's Queue be?
-#define SERV_0_QUEUE_SIZE 16
+#define SERV_0_QUEUE_SIZE 32
 
 /****************************************************************************/
 // These are the definitions for Service 1

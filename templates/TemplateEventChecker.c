@@ -64,8 +64,11 @@ static uint8_t LightInitialized = FALSE;
 static uint8_t LastLightWasDark = FALSE;
 static uint8_t BumperInitialized = FALSE;
 static uint8_t StableBumperState = 0u;
+static uint8_t PendingBumpedMask = 0u;
 static uint8_t PendingUnbumpedMask = 0u;
 static uint8_t BumperHistory[NUM_BUMPERS];
+static uint8_t PendingLightEventValid = FALSE;
+static ES_Event PendingLightEvent;
 
 /*******************************************************************************
  * PUBLIC FUNCTIONS                                                            *
@@ -79,11 +82,24 @@ uint8_t TemplateCheckBumpers(void)
     uint8_t newlyBumped = 0u;
     uint8_t newlyReleased = 0u;
 
+    if (PendingBumpedMask != 0u) {
+        thisEvent.EventType = BUMPED;
+        thisEvent.EventParam = PendingBumpedMask;
+        if (PostDetectedEvent(thisEvent, __func__) == TRUE) {
+            PendingBumpedMask = 0u;
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     if (PendingUnbumpedMask != 0u) {
         thisEvent.EventType = UNBUMPED;
         thisEvent.EventParam = PendingUnbumpedMask;
-        PendingUnbumpedMask = 0u;
-        return PostDetectedEvent(thisEvent, __func__);
+        if (PostDetectedEvent(thisEvent, __func__) == TRUE) {
+            PendingUnbumpedMask = 0u;
+            return TRUE;
+        }
+        return FALSE;
     }
 
     if (BumperInitialized == FALSE) {
@@ -113,16 +129,26 @@ uint8_t TemplateCheckBumpers(void)
     }
 
     if (newlyBumped != 0u) {
-        thisEvent.EventType = BUMPED;
-        thisEvent.EventParam = newlyBumped;
+        PendingBumpedMask |= newlyBumped;
         PendingUnbumpedMask |= newlyReleased;
-        return PostDetectedEvent(thisEvent, __func__);
+        thisEvent.EventType = BUMPED;
+        thisEvent.EventParam = PendingBumpedMask;
+        if (PostDetectedEvent(thisEvent, __func__) == TRUE) {
+            PendingBumpedMask = 0u;
+            return TRUE;
+        }
+        return FALSE;
     }
 
     if (newlyReleased != 0u) {
+        PendingUnbumpedMask |= newlyReleased;
         thisEvent.EventType = UNBUMPED;
-        thisEvent.EventParam = newlyReleased;
-        return PostDetectedEvent(thisEvent, __func__);
+        thisEvent.EventParam = PendingUnbumpedMask;
+        if (PostDetectedEvent(thisEvent, __func__) == TRUE) {
+            PendingUnbumpedMask = 0u;
+            return TRUE;
+        }
+        return FALSE;
     }
 
     return FALSE;
@@ -133,6 +159,14 @@ uint8_t TemplateCheckLight(void)
     ES_Event thisEvent;
     uint16_t lightLevel = Roach_LightLevel();
 
+    if (PendingLightEventValid == TRUE) {
+        if (PostDetectedEvent(PendingLightEvent, __func__) == TRUE) {
+            PendingLightEventValid = FALSE;
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     if (LightInitialized == FALSE) {
         LastLightWasDark = (lightLevel >= ROACH_LIGHT_TO_DARK_THRESHOLD) ? TRUE : FALSE;
         LightInitialized = TRUE;
@@ -142,16 +176,26 @@ uint8_t TemplateCheckLight(void)
     if (LastLightWasDark == FALSE) {
         if (lightLevel >= ROACH_LIGHT_TO_DARK_THRESHOLD) {
             LastLightWasDark = TRUE;
-            thisEvent.EventType = INTO_DARK;
-            thisEvent.EventParam = lightLevel;
-            return PostDetectedEvent(thisEvent, __func__);
+            PendingLightEvent.EventType = INTO_DARK;
+            PendingLightEvent.EventParam = lightLevel;
+            PendingLightEventValid = TRUE;
+            if (PostDetectedEvent(PendingLightEvent, __func__) == TRUE) {
+                PendingLightEventValid = FALSE;
+                return TRUE;
+            }
+            return FALSE;
         }
     } else {
         if (lightLevel <= ROACH_DARK_TO_LIGHT_THRESHOLD) {
             LastLightWasDark = FALSE;
-            thisEvent.EventType = INTO_LIGHT;
-            thisEvent.EventParam = lightLevel;
-            return PostDetectedEvent(thisEvent, __func__);
+            PendingLightEvent.EventType = INTO_LIGHT;
+            PendingLightEvent.EventParam = lightLevel;
+            PendingLightEventValid = TRUE;
+            if (PostDetectedEvent(PendingLightEvent, __func__) == TRUE) {
+                PendingLightEventValid = FALSE;
+                return TRUE;
+            }
+            return FALSE;
         }
     }
 

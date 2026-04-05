@@ -290,30 +290,8 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
 {
     uint8_t makeTransition = FALSE;
     DarkSubState_t nextState = CurrentDarkState;
-    uint8_t rawBumpers = ReadCurrentBumpers();
 
     ES_AddTattlePoint(__FUNCTION__, DarkStateNames[CurrentDarkState], ThisEvent);
-
-    if ((CurrentDarkState == DarkStillState) &&
-            (rawBumpers != 0u) &&
-            (ThisEvent.EventType != ES_ENTRY) &&
-            (ThisEvent.EventType != ES_EXIT) &&
-            (ThisEvent.EventType != ES_INIT) &&
-            (ThisEvent.EventType != INTO_LIGHT) &&
-            (ThisEvent.EventType != INTO_DARK)) {
-        ThisEvent.EventType = BUMPED;
-        ThisEvent.EventParam = rawBumpers;
-    } else if ((CurrentDarkState == DarkEscapeState) &&
-            (rawBumpers != 0u) &&
-            (rawBumpers != DarkEscapeBumpMask) &&
-            (ThisEvent.EventType != ES_ENTRY) &&
-            (ThisEvent.EventType != ES_EXIT) &&
-            (ThisEvent.EventType != ES_INIT) &&
-            (ThisEvent.EventType != INTO_LIGHT) &&
-            (ThisEvent.EventType != INTO_DARK)) {
-        ThisEvent.EventType = BUMPED;
-        ThisEvent.EventParam = rawBumpers;
-    }
 
     switch (CurrentDarkState) {
     case InitPDarkState:
@@ -329,11 +307,18 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
         case ES_ENTRY:
             StopMotors();
             Roach_BarGraph(ROACH_HIDE_LED_LEVEL);
+            StableBumperState = ReadCurrentBumpers();
+            if (StableBumperState != 0u) {
+                ConfigureDarkEscape(StableBumperState);
+                DarkEscapeRetryCount = 0u;
+                nextState = DarkEscapeState;
+                makeTransition = TRUE;
+            }
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
         case BUMPED:
-            ConfigureDarkEscape(ReadCurrentBumpers());
+            ConfigureDarkEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             DarkEscapeRetryCount = 0u;
             nextState = DarkEscapeState;
             makeTransition = TRUE;
@@ -364,7 +349,7 @@ static ES_Event RunDarkSubHSM(ES_Event ThisEvent)
 
         case BUMPED:
             (void)ES_Timer_StopTimer(ROACH_RELEASE_HOLD_TIMER);
-            ConfigureDarkEscape(ReadCurrentBumpers());
+            ConfigureDarkEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             DarkEscapeRetryCount = 0u;
             ApplyDarkEscapeMotion();
             ThisEvent.EventType = ES_NO_EVENT;
@@ -437,31 +422,8 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
 {
     uint8_t makeTransition = FALSE;
     LightSubState_t nextState = CurrentLightState;
-    uint8_t rawBumpers = ReadCurrentBumpers();
 
     ES_AddTattlePoint(__FUNCTION__, LightStateNames[CurrentLightState], ThisEvent);
-
-    if ((CurrentLightState != InitPLightState) &&
-            (CurrentLightState != LightEscapeState) &&
-            (rawBumpers != 0u) &&
-            (ThisEvent.EventType != ES_ENTRY) &&
-            (ThisEvent.EventType != ES_EXIT) &&
-            (ThisEvent.EventType != ES_INIT) &&
-            (ThisEvent.EventType != INTO_DARK) &&
-            (ThisEvent.EventType != INTO_LIGHT)) {
-        ThisEvent.EventType = BUMPED;
-        ThisEvent.EventParam = rawBumpers;
-    } else if ((CurrentLightState == LightEscapeState) &&
-            (rawBumpers != 0u) &&
-            (rawBumpers != LightEscapeBumpMask) &&
-            (ThisEvent.EventType != ES_ENTRY) &&
-            (ThisEvent.EventType != ES_EXIT) &&
-            (ThisEvent.EventType != ES_INIT) &&
-            (ThisEvent.EventType != INTO_DARK) &&
-            (ThisEvent.EventType != INTO_LIGHT)) {
-        ThisEvent.EventType = BUMPED;
-        ThisEvent.EventParam = rawBumpers;
-    }
 
     switch (CurrentLightState) {
     case InitPLightState:
@@ -475,9 +437,16 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
     case LightRunState:
         switch (ThisEvent.EventType) {
         case ES_ENTRY:
-            DriveStraight(ROACH_RUN_SPEED);
-            Roach_BarGraph(ROACH_RUN_LED_LEVEL);
-            ScheduleNextLightBehavior();
+            StableBumperState = ReadCurrentBumpers();
+            if (StableBumperState != 0u) {
+                ConfigureLightEscape(StableBumperState);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+            } else {
+                DriveStraight(ROACH_RUN_SPEED);
+                Roach_BarGraph(ROACH_RUN_LED_LEVEL);
+                ScheduleNextLightBehavior();
+            }
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
@@ -487,7 +456,7 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
@@ -523,7 +492,7 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             if (LightEscapeRetryCount >= ROACH_MAX_BUMP_RETRIES) {
                 LightEscapePhase = LIGHT_ESCAPE_TURN_PHASE;
             } else {
@@ -554,10 +523,17 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
     case LightSearchState:
         switch (ThisEvent.EventType) {
         case ES_ENTRY:
-            SearchTurnRight ^= TRUE;
-            DriveArc(ROACH_SEARCH_SPEED, SearchTurnRight);
-            Roach_BarGraph(ROACH_SEARCH_LED_LEVEL);
-            ES_Timer_InitTimer(ROACH_BEHAVIOR_TIMER, ROACH_SEARCH_DURATION_MS);
+            StableBumperState = ReadCurrentBumpers();
+            if (StableBumperState != 0u) {
+                ConfigureLightEscape(StableBumperState);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+            } else {
+                SearchTurnRight ^= TRUE;
+                DriveArc(ROACH_SEARCH_SPEED, SearchTurnRight);
+                Roach_BarGraph(ROACH_SEARCH_LED_LEVEL);
+                ES_Timer_InitTimer(ROACH_BEHAVIOR_TIMER, ROACH_SEARCH_DURATION_MS);
+            }
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
@@ -567,7 +543,7 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
@@ -590,8 +566,15 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
     case LightDanceState:
         switch (ThisEvent.EventType) {
         case ES_ENTRY:
-            DanceStep = 0u;
-            ApplyDanceStep();
+            StableBumperState = ReadCurrentBumpers();
+            if (StableBumperState != 0u) {
+                ConfigureLightEscape(StableBumperState);
+                nextState = LightEscapeState;
+                makeTransition = TRUE;
+            } else {
+                DanceStep = 0u;
+                ApplyDanceStep();
+            }
             ThisEvent.EventType = ES_NO_EVENT;
             break;
 
@@ -601,7 +584,7 @@ static ES_Event RunLightSubHSM(ES_Event ThisEvent)
             break;
 
         case BUMPED:
-            ConfigureLightEscape(ReadCurrentBumpers());
+            ConfigureLightEscape((uint8_t)(ThisEvent.EventParam & 0x0Fu));
             nextState = LightEscapeState;
             makeTransition = TRUE;
             ThisEvent.EventType = ES_NO_EVENT;
