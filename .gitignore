@@ -1,10 +1,28 @@
-ECE118_Lab0.X/build/
-ECE118_Lab0.X/debug/
-ECE118_Lab0.X/dist/
-ECE118_Lab0.X/.generated_files/
-ECE118_Lab0.X/nbproject/private/
+# MPLAB X generated outputs
+**/.generated_files/
+**/build/
+**/debug/
+**/dist/
+**/nbproject/private/
+
+# Local scratch and probe directories
+tmp_make_probe/
+**/test_pwsh_probe/
+
+# Compiler and linker artifacts
 *.o
+*.o.d
+*.d
 *.elf
 *.hex
 *.map
+*.a
+*.lst
+*.srec
+
+# MPLAB and programmer metadata
 memoryfile.xml
+
+# Python cache from helper scripts
+__pycache__/
+*.pyc
